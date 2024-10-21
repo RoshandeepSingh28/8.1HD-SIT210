@@ -1,19 +1,21 @@
 #include <ArduinoBLE.h>
+#include <Wire.h>
+#include <BH1750.h>
 
 BLEService customService("180C");                                               // Custom service UUID
 BLEStringCharacteristic customCharacteristic("2A56", BLERead | BLENotify, 20);  // Characteristic to send data
-// Define pins for the ultrasonic sensor
-const int trigPin = 9;
-const int echoPin = 10;
+BH1750 lightSensor(0x23);
 
-// Variable to store the duration and distance
-long duration;
-int distance;
+unsigned long lastMeasurementTime = 0;           // To manage measurement timing
+const unsigned long measurementInterval = 1000;  // Measurement interval in milliseconds
 
 void setup() {
   Serial.begin(9600);
-    pinMode(trigPin, OUTPUT);
-  pinMode(echoPin, INPUT);
+
+  // Initialize the light sensor
+  Wire.begin();
+  lightSensor.begin();
+
   BLE.begin();
   // Initialize BLE
   if (!BLE.begin()) {
@@ -37,43 +39,42 @@ void setup() {
   Serial.println("BLE device active, waiting for connection...");
 }
 
-
 void loop() {
   // Wait for a BLE central to connect
   BLEDevice central = BLE.central();
-  
+
   if (central) {
     Serial.print("Connected to central: ");
     Serial.println(central.address());
 
     while (central.connected()) {
-      // Send data to the central device
-      digitalWrite(trigPin, LOW);
-      delayMicroseconds(2);
+      if (millis() - lastMeasurementTime >= measurementInterval) {
+        lastMeasurementTime = millis();  // Update the last measurement time
 
-      // Trigger the sensor by setting the trigPin HIGH for 10 microseconds
-      digitalWrite(trigPin, HIGH);
-      delayMicroseconds(10);
-      digitalWrite(trigPin, LOW);
+        // Read light level
+        float lux = lightSensor.readLightLevel();
 
-      // Read the echoPin to get the duration of the pulse
-      duration = pulseIn(echoPin, HIGH);
+        // Check if reading was successful
+        if (lux >= 0) {
+          Serial.print("Light Intensity: ");
+          Serial.print(lux);
+          Serial.println(" lx");
 
-      // Calculate the distance in centimeters
-      distance = duration * 0.034 / 2;
+          // Convert the light intensity (lux) to a String for BLE
+          String luxString = String((int)lux); // Convert lux to String
 
-     
-        String distanceStr = String(distance);
-        customCharacteristic.writeValue(distanceStr);
-        Serial.println("Sent distance: " + distanceStr + " cm");
-      // Print the distance to the serial monitor
-      Serial.print("Distance: ");
-      Serial.print(distance);
-      Serial.println(" cm");
+          // Send the light intensity over BLE
+          customCharacteristic.writeValue(luxString);
+        } else {
+          Serial.println("Failed to read light level.");
+        }
+      }
 
-      delay(1000);  // Send data every second
+      BLE.poll();
     }
 
     Serial.println("Disconnected from central");
   }
+
+  BLE.poll();
 }
